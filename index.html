@@ -252,7 +252,19 @@
         const mainVideo = document.getElementById('mainVideo');
         let isRemoteUpdate = false;
 
-        const rtcConfig = { iceServers: [{ urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] }] };
+      const rtcConfig = {
+    iceServers: [
+        {
+            urls: [
+                'stun:stun.l.google.com:19302',
+                'stun:stun1.l.google.com:19302',
+                'stun:stun2.l.google.com:19302',
+                'stun:stun3.l.google.com:19302',
+                'stun:stun4.l.google.com:19302',
+            ],
+        },
+    ],
+};
 
         async function joinRoom() {
             roomId = document.getElementById('roomInput').value.trim();
@@ -291,34 +303,60 @@
         mainVideo.onpause = () => { if(!isRemoteUpdate) db.ref(`rooms/${roomId}/sync`).update({ time: mainVideo.currentTime, playing: false }); };
 
         // --- VIDEO CHAT HANDSHAKE ---
-        async function initWebRTC() {
+      async function initWebRTC() {
+            // Generates a unique ID so the database knows who is who
+            const myId = Math.random().toString(36).substring(7); 
             peerConnection = new RTCPeerConnection(rtcConfig);
-            localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
-            peerConnection.ontrack = e => document.getElementById('remoteVideo').srcObject = e.streams[0];
-            peerConnection.onicecandidate = e => { if(e.candidate) db.ref(`rooms/${roomId}/ice`).push(e.candidate.toJSON()); };
+            
+            // Push your camera/mic tracks to the connection
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-            const callRef = db.ref(`rooms/${roomId}/call`);
-            const snap = await callRef.once('value');
+            // When the remote stream (friend) arrives, show it in the remoteVideo element
+            peerConnection.ontrack = (event) => {
+                const remoteVid = document.getElementById('remoteVideo');
+                if (remoteVid.srcObject !== event.streams[0]) {
+                    remoteVid.srcObject = event.streams[0];
+                }
+            };
 
-            if(!snap.exists()) {
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
-                callRef.set({ offer });
-            } else {
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(snap.val().offer));
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-                callRef.update({ answer });
-            }
+            // Collect "ICE candidates" (network paths) and share them via Firebase
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    db.ref(`rooms/${roomId}/ice/${myId}`).push(event.candidate.toJSON());
+                }
+            };
 
-            callRef.on('value', async s => {
-                const d = s.val();
-                if(d.answer && !peerConnection.currentRemoteDescription) await peerConnection.setRemoteDescription(new RTCSessionDescription(d.answer));
+            const callRef = db.ref(`rooms/${roomId}/calls`);
+
+            // The Handshake Logic
+            callRef.on('value', async (snapshot) => {
+                const data = snapshot.val();
+                if (!data) {
+                    // First person to join becomes the Host and creates the Offer
+                    const offer = await peerConnection.createOffer();
+                    await peerConnection.setLocalDescription(offer);
+                    callRef.set({ hostId: myId, offer: offer });
+                } else if (data.hostId !== myId && !peerConnection.currentRemoteDescription) {
+                    // Second person joins, takes the Offer, and creates an Answer
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+                    const answer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(answer);
+                    callRef.update({ answer: answer });
+                } else if (data.hostId === myId && data.answer && !peerConnection.currentRemoteDescription) {
+                    // Host receives the Answer from the friend
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                }
             });
 
-            db.ref(`rooms/${roomId}/ice`).on('child_added', s => peerConnection.addIceCandidate(new RTCIceCandidate(s.val())));
+            // Listen for ICE candidates from the OTHER person only
+            db.ref(`rooms/${roomId}/ice`).on('child_added', (snapshot) => {
+                if (snapshot.key !== myId) {
+                    snapshot.forEach(child => {
+                        peerConnection.addIceCandidate(new RTCIceCandidate(child.val())).catch(e => {});
+                    });
+                }
+            });
         }
-
         // --- UI CONTROLS ---
         function toggleMic() {
             const t = localStream.getAudioTracks()[0];

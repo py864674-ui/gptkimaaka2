@@ -1,206 +1,355 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Watch Party Pro Fixed</title>
-<style>
-  body { font-family:sans-serif; background:#121212; color:#fff; display:flex; flex-direction:column; align-items:center; padding:20px; }
-  video { border:2px solid #fff; margin:10px; max-width:90%; max-height:300px; }
-  input, button { padding:8px; margin:5px; border-radius:5px; border:none; }
-  #controls { margin:10px; }
-  #cams { display:flex; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SyncWatch | Premium Cinema</title>
+    
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+
+    <style>
+        :root {
+            --primary: #e50914;
+            --bg: #0a0a0a;
+            --card: #161616;
+            --accent: #00d4ff;
+        }
+
+        body { 
+            margin: 0; 
+            background: var(--bg); 
+            color: white; 
+            font-family: 'Inter', system-ui, sans-serif; 
+            overflow: hidden; 
+        }
+
+        .hidden { display: none !important; }
+
+        /* Login Glassmorphism */
+        #login-screen { 
+            height: 100vh; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            background: radial-gradient(circle at center, #222 0%, #000 100%);
+        }
+
+        .card { 
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            padding: 50px; 
+            border-radius: 24px; 
+            text-align: center; 
+            border: 1px solid rgba(255,255,255,0.1);
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+
+        /* Layout */
+        #main-app { 
+            display: grid; 
+            grid-template-columns: 1fr 380px; 
+            height: 100vh; 
+        }
+
+        /* Movie Side */
+        .video-container { 
+            padding: 30px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 20px; 
+            background: linear-gradient(to bottom, #111, #000);
+        }
+
+        #mainVideo { 
+            width: 100%; 
+            border-radius: 12px; 
+            background: #000; 
+            box-shadow: 0 0 40px rgba(0,0,0,0.8);
+            border: 1px solid #333;
+        }
+
+        .host-controls { 
+            display: flex; 
+            gap: 12px; 
+            background: var(--card); 
+            padding: 15px; 
+            border-radius: 12px; 
+            border: 1px solid #222;
+        }
+
+        .host-controls input { 
+            flex: 1; 
+            padding: 12px; 
+            border-radius: 8px; 
+            border: none; 
+            background: #000; 
+            color: #fff; 
+            font-size: 14px;
+        }
+
+        /* Sidebar Side */
+        .sidebar { 
+            background: var(--card); 
+            border-left: 1px solid #222; 
+            display: flex; 
+            flex-direction: column; 
+            padding: 20px; 
+            gap: 20px;
+        }
+
+        .camera-grid { 
+            display: grid; 
+            grid-template-rows: 1fr 1fr; 
+            gap: 15px; 
+        }
+
+        .cam-wrapper { 
+            position: relative; 
+            background: #000; 
+            border-radius: 15px; 
+            overflow: hidden; 
+            height: 160px; 
+            border: 2px solid #333;
+            transition: border 0.3s;
+        }
+
+        .cam-wrapper.active-border { border-color: var(--primary); }
+
+        .cam-wrapper video { width: 100%; height: 100%; object-fit: cover; }
+
+        .cam-label { 
+            position: absolute; 
+            top: 10px; 
+            left: 10px; 
+            font-size: 12px; 
+            background: rgba(0,0,0,0.7); 
+            padding: 4px 10px; 
+            border-radius: 20px; 
+            font-weight: bold;
+        }
+
+        /* Controls */
+        .av-buttons { display: flex; gap: 10px; }
+        
+        .btn-toggle {
+            flex: 1;
+            padding: 12px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: 0.2s;
+            background: #333;
+            color: white;
+        }
+
+        .btn-toggle.muted { background: var(--primary); }
+
+        /* Chat Modern */
+        .chat-area { 
+            flex: 1; 
+            display: flex; 
+            flex-direction: column; 
+            background: #000; 
+            border-radius: 15px; 
+            padding: 15px; 
+            border: 1px solid #222;
+        }
+
+        #chatDisplay { 
+            flex: 1; 
+            overflow-y: auto; 
+            font-size: 14px; 
+            margin-bottom: 10px; 
+        }
+
+        .chat-msg { margin-bottom: 10px; line-height: 1.4; color: #aaa; }
+        .chat-msg b { color: var(--accent); margin-right: 5px; }
+
+        .chat-input-row { display: flex; gap: 8px; }
+        .chat-input-row input { 
+            flex: 1; 
+            padding: 10px; 
+            border-radius: 8px; 
+            border: none; 
+            background: #222; 
+            color: white; 
+        }
+
+        .btn-primary { 
+            background: var(--primary); 
+            color: white; 
+            border: none; 
+            padding: 12px 24px; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-weight: bold; 
+        }
+    </style>
 </head>
 <body>
 
-<h1>Watch Party Pro</h1>
+    <div id="login-screen">
+        <div class="card">
+            <h1 style="font-size: 40px; margin-bottom: 10px; letter-spacing: -1px;">Sync<span style="color:var(--primary)">Watch</span></h1>
+            <p style="color: #888; margin-bottom: 30px;">Private Cinema & Video Chat</p>
+            <input type="text" id="roomInput" placeholder="Enter Room Name..." style="padding:15px; width:280px; border-radius:10px; border:none; background:#222; color:white; margin-bottom:20px;"><br>
+            <button class="btn-primary" style="width: 100%;" onclick="joinRoom()">Join Session</button>
+        </div>
+    </div>
 
-<video id="moviePlayer" controls></video>
+    <div id="main-app" class="hidden">
+        <div class="video-container">
+            <div class="host-controls">
+                <input type="text" id="videoUrl" placeholder="Paste Direct Movie Link (.mp4)...">
+                <button class="btn-primary" onclick="changeVideo()">Push to Sync</button>
+            </div>
+            <video id="mainVideo" controls></video>
+        </div>
 
-<div id="controls">
-  <input id="roomInput" placeholder="Room ID">
-  <button id="joinBtn">Join Room</button>
-  <input id="videoUrlInput" placeholder="Video URL">
-  <button id="loadVideoBtn">Load Video (Host Only)</button>
-</div>
+        <div class="sidebar">
+            <div class="camera-grid">
+                <div class="cam-wrapper">
+                    <video id="localVideo" autoplay muted playsinline></video>
+                    <div class="cam-label">YOU</div>
+                </div>
+                <div class="cam-wrapper">
+                    <video id="remoteVideo" autoplay playsinline></video>
+                    <div class="cam-label">FRIEND</div>
+                </div>
+            </div>
 
-<div id="cams">
-  <video id="localVideo" autoplay muted playsinline></video>
-  <video id="remoteVideo" autoplay playsinline></video>
-</div>
-  <div id="audioControls">
-  <button id="muteBtn">Mute Mic</button>
-  <label>Remote Volume:
-    <input type="range" id="remoteVolume" min="0" max="1" step="0.05" value="1">
-  </label>
-</div>
+            <div class="av-buttons">
+                <button id="micBtn" class="btn-toggle" onclick="toggleMic()">Mute Mic</button>
+                <button id="camBtn" class="btn-toggle" onclick="toggleCam()">Stop Video</button>
+            </div>
 
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+            <div class="chat-area">
+                <div id="chatDisplay"></div>
+                <div class="chat-input-row">
+                    <input type="text" id="chatInput" placeholder="Send a message...">
+                    <button class="btn-primary" style="padding:10px;" onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
-<script>
-// Firebase config
-  const firebaseConfig = {
-    apiKey: "AIzaSyBWgS5isj1hERu1IXh6xv1cn83xftdeDgo",
-    authDomain: "watch-party-pro.firebaseapp.com",
-    databaseURL: "https://watch-party-pro-default-rtdb.firebaseio.com",
-    projectId: "watch-party-pro",
-    storageBucket: "watch-party-pro.appspot.com",
-    messagingSenderId: "424851022131",
-    appId: "1:424851022131:web:d3c090eafa662e0f2b1e46"
-  };
-  firebase.initializeApp(firebaseConfig);
-  const database = firebase.database();
+    <script>
+        // REPLACE WITH YOUR FIREBASE CONFIG
+        const firebaseConfig = {
+            apiKey: "AIzaSyBWgS5isj1hERu1IXh6xv1cn83xftdeDgo",
+            databaseURL: "https://watch-party-pro-default-rtdb.firebaseio.com/",
+            projectId: "watch-party-pro",
+        };
 
-  // Variables
-  let currentRoom = "";
-  let isHost = false;
-  let peerConnection;
-  let localStream;
-  const SYNC_THRESHOLD = 0.5;
-  const servers = { iceServers:[{ urls:"stun:stun.l.google.com:19302" }] };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
 
-  const moviePlayer = document.getElementById("moviePlayer");
-  const joinBtn = document.getElementById("joinBtn");
-  const roomInput = document.getElementById("roomInput");
-  const videoUrlInput = document.getElementById("videoUrlInput");
-  const loadVideoBtn = document.getElementById("loadVideoBtn");
-  const localVideo = document.getElementById("localVideo");
-  const remoteVideo = document.getElementById("remoteVideo");
+        let roomId = "";
+        let localStream;
+        let peerConnection;
+        const mainVideo = document.getElementById('mainVideo');
+        let isRemoteUpdate = false;
 
-  // ===== Camera/Mic =====
-  navigator.mediaDevices.getUserMedia({ video:true, audio:true })
-  .then(stream => {
-    localStream = stream;
-    localVideo.srcObject = stream;
-    // ===== Mic Mute/Unmute =====
-const muteBtn = document.getElementById("muteBtn");
-let micMuted = false;
+        const rtcConfig = { iceServers: [{ urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] }] };
 
-muteBtn.onclick = () => {
-  if (!localStream) return;
-  localStream.getAudioTracks().forEach(track => track.enabled = micMuted); // toggle
-  micMuted = !micMuted;
-  muteBtn.textContent = micMuted ? "Unmute Mic" : "Mute Mic";
-};
+        async function joinRoom() {
+            roomId = document.getElementById('roomInput').value.trim();
+            if(!roomId) return;
+            document.getElementById('login-screen').classList.add('hidden');
+            document.getElementById('main-app').classList.remove('hidden');
 
-// ===== Remote Volume Control =====
-const remoteVolume = document.getElementById("remoteVolume");
-remoteVolume.addEventListener("input", () => {
-  remoteVideo.volume = parseFloat(remoteVolume.value);
-});
-    
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            document.getElementById('localVideo').srcObject = localStream;
 
-    peerConnection = new RTCPeerConnection(servers);
-    stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+            initSync();
+            initChat();
+            initWebRTC();
+        }
 
-    peerConnection.ontrack = e => remoteVideo.srcObject = e.streams[0];
+        // --- MOVIE SYNC ---
+        function initSync() {
+            const ref = db.ref(`rooms/${roomId}/sync`);
+            ref.on('value', snap => {
+                const data = snap.val();
+                if(!data) return;
+                isRemoteUpdate = true;
+                if(mainVideo.src !== data.url) mainVideo.src = data.url;
+                if(Math.abs(mainVideo.currentTime - data.time) > 2) mainVideo.currentTime = data.time;
+                data.playing ? mainVideo.play() : mainVideo.pause();
+                setTimeout(() => isRemoteUpdate = false, 500);
+            });
+        }
 
-    peerConnection.onicecandidate = e => {
-      if (!currentRoom || !e.candidate) return;
-      database.ref("calls/"+currentRoom+"/myCandidates").push(e.candidate.toJSON());
-    };
-  })
-  .catch(err => { console.error(err); alert("Allow camera/mic access!"); });
+        function changeVideo() {
+            const url = document.getElementById('videoUrl').value;
+            db.ref(`rooms/${roomId}/sync`).set({ url, time: 0, playing: true });
+        }
 
-  // ===== Host Sync =====
-  function hostSync() {
-    if (!isHost || !currentRoom) return;
-    database.ref("rooms/"+currentRoom+"/sync").set({
-      time: moviePlayer.currentTime,
-      playing: !moviePlayer.paused
-    });
-  }
-  setInterval(hostSync, 300);
-  moviePlayer.addEventListener("play", hostSync);
-  moviePlayer.addEventListener("pause", hostSync);
+        mainVideo.onplay = () => { if(!isRemoteUpdate) db.ref(`rooms/${roomId}/sync`).update({ time: mainVideo.currentTime, playing: true }); };
+        mainVideo.onpause = () => { if(!isRemoteUpdate) db.ref(`rooms/${roomId}/sync`).update({ time: mainVideo.currentTime, playing: false }); };
 
-  // ===== Join Room =====
-  joinBtn.onclick = async function() {
-    const roomId = roomInput.value.trim();
-    if (!roomId) { alert("Enter Room ID"); return; }
-    currentRoom = roomId;
+        // --- VIDEO CHAT HANDSHAKE ---
+        async function initWebRTC() {
+            peerConnection = new RTCPeerConnection(rtcConfig);
+            localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
+            peerConnection.ontrack = e => document.getElementById('remoteVideo').srcObject = e.streams[0];
+            peerConnection.onicecandidate = e => { if(e.candidate) db.ref(`rooms/${roomId}/ice`).push(e.candidate.toJSON()); };
 
-    // Check host
-    const snap = await database.ref("rooms/"+currentRoom+"/video").once("value");
-    isHost = !snap.exists();
-    if (isHost) database.ref("calls/"+currentRoom).remove();
-    alert(isHost ? "Host: paste URL" : "Viewer: video will load automatically");
+            const callRef = db.ref(`rooms/${roomId}/call`);
+            const snap = await callRef.once('value');
 
-    // Sync immediately for new viewer
-    if (!isHost) {
-      const syncSnap = await database.ref("rooms/"+currentRoom+"/sync").once("value");
-      const videoSnap = await database.ref("rooms/"+currentRoom+"/video").once("value");
-      const data = videoSnap.val();
-      const sync = syncSnap.val();
-      if (data) { moviePlayer.src = data.url; moviePlayer.currentTime = sync?.time||0; if(sync?.playing) moviePlayer.play().catch(()=>{}); }
-    }
+            if(!snap.exists()) {
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                callRef.set({ offer });
+            } else {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(snap.val().offer));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                callRef.update({ answer });
+            }
 
-    // WebRTC offer/answer
-    const offerSnap = await database.ref("calls/"+currentRoom+"/offer").once("value");
-    if (!offerSnap.exists()) await createOffer();
-    else await answerOffer(offerSnap.val());
+            callRef.on('value', async s => {
+                const d = s.val();
+                if(d.answer && !peerConnection.currentRemoteDescription) await peerConnection.setRemoteDescription(new RTCSessionDescription(d.answer));
+            });
 
-    // Listen for ICE candidates
-    database.ref("calls/"+currentRoom+"/remoteCandidates").on("child_added", snap => {
-      peerConnection.addIceCandidate(new RTCIceCandidate(snap.val()));
-    });
+            db.ref(`rooms/${roomId}/ice`).on('child_added', s => peerConnection.addIceCandidate(new RTCIceCandidate(s.val())));
+        }
 
-    // Video and sync listeners
-    database.ref("rooms/"+currentRoom+"/video").on("value", snap=>{
-      const data = snap.val();
-      if (!data || isHost) return;
-      moviePlayer.src = data.url; moviePlayer.currentTime = data.time||0;
-      if(data.playing) moviePlayer.play().catch(()=>{}); else moviePlayer.pause();
-    });
+        // --- UI CONTROLS ---
+        function toggleMic() {
+            const t = localStream.getAudioTracks()[0];
+            t.enabled = !t.enabled;
+            const btn = document.getElementById('micBtn');
+            btn.innerText = t.enabled ? "Mute Mic" : "Unmute Mic";
+            btn.classList.toggle('muted', !t.enabled);
+        }
 
-    database.ref("rooms/"+currentRoom+"/sync").on("value", snap=>{
-      if(isHost) return;
-      const data = snap.val();
-      if(!data) return;
-      const diff = Math.abs(moviePlayer.currentTime - data.time);
-      if(diff>SYNC_THRESHOLD) moviePlayer.currentTime = data.time;
-      if(data.playing) moviePlayer.play().catch(()=>{}); else if(!data.playing && !moviePlayer.paused) moviePlayer.pause();
-    });
-  };
+        function toggleCam() {
+            const t = localStream.getVideoTracks()[0];
+            t.enabled = !t.enabled;
+            const btn = document.getElementById('camBtn');
+            btn.innerText = t.enabled ? "Stop Video" : "Start Video";
+            btn.classList.toggle('muted', !t.enabled);
+        }
 
-  // ===== Host Load Video =====
-  loadVideoBtn.onclick = function() {
-    if (!currentRoom) { alert("Join a room"); return; }
-    const url = videoUrlInput.value.trim();
-    if (!url) { alert("Paste valid URL"); return; }
-    isHost = true;
-    moviePlayer.src = url; moviePlayer.currentTime=0; moviePlayer.play();
-    database.ref("rooms/"+currentRoom+"/video").set({ url, time:0, playing:true });
-  };
+        function initChat() {
+            db.ref(`rooms/${roomId}/chat`).on('child_added', s => {
+                const m = document.createElement('div');
+                m.className = 'chat-msg';
+                m.innerHTML = `<b>Friend:</b> ${s.val()}`;
+                document.getElementById('chatDisplay').appendChild(m);
+                document.getElementById('chatDisplay').scrollTop = 9999;
+            });
+        }
 
-  // ===== WebRTC =====
-  async function createOffer() {
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    await database.ref("calls/"+currentRoom+"/offer").set({type:offer.type,sdp:offer.sdp});
-    database.ref("calls/"+currentRoom+"/answer").on("value", snap=>{
-      const answer = snap.val(); if(!answer) return;
-      peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-    });
-    database.ref("calls/"+currentRoom+"/calleeCandidates").on("child_added", snap=>{
-      peerConnection.addIceCandidate(new RTCIceCandidate(snap.val()));
-    });
-  }
-
-  async function answerOffer(offer) {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    await database.ref("calls/"+currentRoom+"/answer").set({type:answer.type,sdp:answer.sdp});
-    database.ref("calls/"+currentRoom+"/callerCandidates").on("child_added", snap=>{
-      peerConnection.addIceCandidate(new RTCIceCandidate(snap.val()));
-    });
-  }
-
-};
-</script>
-
+        function sendMessage() {
+            const i = document.getElementById('chatInput');
+            if(i.value) { db.ref(`rooms/${roomId}/chat`).push(i.value); i.value = ""; }
+        }
+    </script>
 </body>
 </html>

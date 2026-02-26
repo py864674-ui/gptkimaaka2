@@ -303,60 +303,83 @@
         mainVideo.onpause = () => { if(!isRemoteUpdate) db.ref(`rooms/${roomId}/sync`).update({ time: mainVideo.currentTime, playing: false }); };
 
         // --- VIDEO CHAT HANDSHAKE ---
-      async function initWebRTC() {
-            // Generates a unique ID so the database knows who is who
-            const myId = Math.random().toString(36).substring(7); 
-            peerConnection = new RTCPeerConnection(rtcConfig);
-            
-            // Push your camera/mic tracks to the connection
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+     async function initWebRTC() {
+    // 1. Create a unique ID for THIS phone
+    const myId = Math.random().toString(36).substring(7);
+    const pcMap = {}; // This will store connections to every person in the room
 
-            // When the remote stream (friend) arrives, show it in the remoteVideo element
-            peerConnection.ontrack = (event) => {
-                const remoteVid = document.getElementById('remoteVideo');
-                if (remoteVid.srcObject !== event.streams[0]) {
-                    remoteVid.srcObject = event.streams[0];
-                }
-            };
+    // 2. Function to create a connection to a specific person
+    async function createPeerConnection(peerId, isOffer) {
+        const pc = new RTCPeerConnection(rtcConfig);
+        pcMap[peerId] = pc;
 
-            // Collect "ICE candidates" (network paths) and share them via Firebase
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    db.ref(`rooms/${roomId}/ice/${myId}`).push(event.candidate.toJSON());
-                }
-            };
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-            const callRef = db.ref(`rooms/${roomId}/calls`);
+        pc.ontrack = (event) => {
+            // If it's a new person, show them in the remote video
+            // Note: For 3+ people, this will show the LATEST person who joined
+            document.getElementById('remoteVideo').srcObject = event.streams[0];
+        };
 
-            // The Handshake Logic
-            callRef.on('value', async (snapshot) => {
-                const data = snapshot.val();
-                if (!data) {
-                    // First person to join becomes the Host and creates the Offer
-                    const offer = await peerConnection.createOffer();
-                    await peerConnection.setLocalDescription(offer);
-                    callRef.set({ hostId: myId, offer: offer });
-                } else if (data.hostId !== myId && !peerConnection.currentRemoteDescription) {
-                    // Second person joins, takes the Offer, and creates an Answer
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-                    const answer = await peerConnection.createAnswer();
-                    await peerConnection.setLocalDescription(answer);
-                    callRef.update({ answer: answer });
-                } else if (data.hostId === myId && data.answer && !peerConnection.currentRemoteDescription) {
-                    // Host receives the Answer from the friend
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-                }
-            });
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                db.ref(`rooms/${roomId}/ice/${peerId}/${myId}`).push(event.candidate.toJSON());
+            }
+        };
 
-            // Listen for ICE candidates from the OTHER person only
-            db.ref(`rooms/${roomId}/ice`).on('child_added', (snapshot) => {
-                if (snapshot.key !== myId) {
-                    snapshot.forEach(child => {
-                        peerConnection.addIceCandidate(new RTCIceCandidate(child.val())).catch(e => {});
-                    });
-                }
-            });
+        if (isOffer) {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            db.ref(`rooms/${roomId}/offers/${peerId}/${myId}`).set({ offer });
         }
+
+        return pc;
+    }
+
+    // 3. Tell the room I am here
+    const myPresenceRef = db.ref(`rooms/${roomId}/users/${myId}`);
+    myPresenceRef.set(true);
+    myPresenceRef.onDisconnect().remove();
+
+    // 4. Listen for others joining
+    db.ref(`rooms/${roomId}/users`).on('child_added', async (snapshot) => {
+        const peerId = snapshot.key;
+        if (peerId !== myId) {
+            // I create an offer to the new person
+            await createPeerConnection(peerId, true);
+        }
+    });
+
+    // 5. Listen for Offers sent TO ME
+    db.ref(`rooms/${roomId}/offers/${myId}`).on('child_added', async (snapshot) => {
+        const peerId = snapshot.key;
+        const data = snapshot.val();
+        const pc = await createPeerConnection(peerId, false);
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        db.ref(`rooms/${roomId}/answers/${peerId}/${myId}`).set({ answer });
+    });
+
+    // 6. Listen for Answers sent TO ME
+    db.ref(`rooms/${roomId}/answers/${myId}`).on('child_added', async (snapshot) => {
+        const peerId = snapshot.key;
+        const data = snapshot.val();
+        if (pcMap[peerId]) {
+            await pcMap[peerId].setRemoteDescription(new RTCSessionDescription(data.answer));
+        }
+    });
+
+    // 7. Listen for ICE candidates sent TO ME
+    db.ref(`rooms/${roomId}/ice/${myId}`).on('child_added', (snapshot) => {
+        const peerId = snapshot.key;
+        snapshot.forEach(child => {
+            if (pcMap[peerId]) {
+                pcMap[peerId].addIceCandidate(new RTCIceCandidate(child.val())).catch(e => {});
+            }
+        });
+    });
+}
         // --- UI CONTROLS ---
         function toggleMic() {
             const t = localStream.getAudioTracks()[0];

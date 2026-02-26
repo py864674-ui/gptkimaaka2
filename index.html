@@ -3,12 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Watch Party Pro</title>
+<title>Watch Party Pro Fixed</title>
 <style>
-  body { font-family: sans-serif; background: #121212; color: #fff; display: flex; flex-direction: column; align-items: center; padding: 20px; }
-  video { border: 2px solid #fff; margin: 10px; max-width: 90%; max-height: 300px; }
-  input, button { padding: 8px; margin: 5px; border-radius: 5px; border: none; }
-  #controls { margin: 10px; }
+  body { font-family:sans-serif; background:#121212; color:#fff; display:flex; flex-direction:column; align-items:center; padding:20px; }
+  video { border:2px solid #fff; margin:10px; max-width:90%; max-height:300px; }
+  input, button { padding:8px; margin:5px; border-radius:5px; border:none; }
+  #controls { margin:10px; }
+  #cams { display:flex; }
 </style>
 </head>
 <body>
@@ -24,7 +25,7 @@
   <button id="loadVideoBtn">Load Video (Host Only)</button>
 </div>
 
-<div>
+<div id="cams">
   <video id="localVideo" autoplay muted playsinline></video>
   <video id="remoteVideo" autoplay playsinline></video>
 </div>
@@ -34,7 +35,7 @@
 
 <script>
 window.onload = function() {
-  // ===== Firebase config =====
+  // Firebase config
   const firebaseConfig = {
     apiKey: "AIzaSyBWgS5isj1hERu1IXh6xv1cn83xftdeDgo",
     authDomain: "watch-party-pro.firebaseapp.com",
@@ -47,12 +48,13 @@ window.onload = function() {
   firebase.initializeApp(firebaseConfig);
   const database = firebase.database();
 
-  // ===== Variables =====
+  // Variables
   let currentRoom = "";
   let isHost = false;
   let peerConnection;
+  let localStream;
   const SYNC_THRESHOLD = 0.5;
-  const servers = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+  const servers = { iceServers:[{ urls:"stun:stun.l.google.com:19302" }] };
 
   const moviePlayer = document.getElementById("moviePlayer");
   const joinBtn = document.getElementById("joinBtn");
@@ -63,23 +65,27 @@ window.onload = function() {
   const remoteVideo = document.getElementById("remoteVideo");
 
   // ===== Camera/Mic =====
-  navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-    .then(stream => {
-      localVideo.srcObject = stream;
-      window.localStream = stream;
-      peerConnection = new RTCPeerConnection(servers);
-      stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
-      peerConnection.ontrack = e => remoteVideo.srcObject = e.streams[0];
-    })
-    .catch(err => {
-      console.error(err);
-      alert("Allow camera/mic access!");
-    });
+  navigator.mediaDevices.getUserMedia({ video:true, audio:true })
+  .then(stream => {
+    localStream = stream;
+    localVideo.srcObject = stream;
+
+    peerConnection = new RTCPeerConnection(servers);
+    stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+
+    peerConnection.ontrack = e => remoteVideo.srcObject = e.streams[0];
+
+    peerConnection.onicecandidate = e => {
+      if (!currentRoom || !e.candidate) return;
+      database.ref("calls/"+currentRoom+"/myCandidates").push(e.candidate.toJSON());
+    };
+  })
+  .catch(err => { console.error(err); alert("Allow camera/mic access!"); });
 
   // ===== Host Sync =====
   function hostSync() {
     if (!isHost || !currentRoom) return;
-    database.ref("rooms/" + currentRoom + "/sync").set({
+    database.ref("rooms/"+currentRoom+"/sync").set({
       time: moviePlayer.currentTime,
       playing: !moviePlayer.paused
     });
@@ -89,92 +95,90 @@ window.onload = function() {
   moviePlayer.addEventListener("pause", hostSync);
 
   // ===== Join Room =====
-  joinBtn.onclick = function() {
+  joinBtn.onclick = async function() {
     const roomId = roomInput.value.trim();
     if (!roomId) { alert("Enter Room ID"); return; }
     currentRoom = roomId;
 
-    if (peerConnection) { peerConnection.close(); peerConnection = null; }
-    peerConnection = new RTCPeerConnection(servers);
-    if (window.localStream) window.localStream.getTracks().forEach(track => peerConnection.addTrack(track, window.localStream));
-    peerConnection.ontrack = e => remoteVideo.srcObject = e.streams[0];
+    // Check host
+    const snap = await database.ref("rooms/"+currentRoom+"/video").once("value");
+    isHost = !snap.exists();
+    if (isHost) database.ref("calls/"+currentRoom).remove();
+    alert(isHost ? "Host: paste URL" : "Viewer: video will load automatically");
 
-    database.ref("rooms/" + currentRoom + "/video").once("value", snap => {
-      isHost = !snap.exists();
-      if (isHost) database.ref("calls/" + currentRoom).remove();
-      alert(isHost ? "You are host. Paste URL" : "Viewer: video will load automatically");
+    // Sync immediately for new viewer
+    if (!isHost) {
+      const syncSnap = await database.ref("rooms/"+currentRoom+"/sync").once("value");
+      const videoSnap = await database.ref("rooms/"+currentRoom+"/video").once("value");
+      const data = videoSnap.val();
+      const sync = syncSnap.val();
+      if (data) { moviePlayer.src = data.url; moviePlayer.currentTime = sync?.time||0; if(sync?.playing) moviePlayer.play().catch(()=>{}); }
+    }
 
-      database.ref("calls/" + currentRoom + "/offer").once("value")
-        .then(snap2 => { if (!snap2.exists()) createOffer(); else answerOffer(snap2.val()); });
+    // WebRTC offer/answer
+    const offerSnap = await database.ref("calls/"+currentRoom+"/offer").once("value");
+    if (!offerSnap.exists()) await createOffer();
+    else await answerOffer(offerSnap.val());
+
+    // Listen for ICE candidates
+    database.ref("calls/"+currentRoom+"/remoteCandidates").on("child_added", snap => {
+      peerConnection.addIceCandidate(new RTCIceCandidate(snap.val()));
     });
 
-    // Video listener
-    database.ref("rooms/" + currentRoom + "/video").on("value", snap => {
+    // Video and sync listeners
+    database.ref("rooms/"+currentRoom+"/video").on("value", snap=>{
       const data = snap.val();
       if (!data || isHost) return;
-      moviePlayer.src = data.url;
-      moviePlayer.currentTime = data.time || 0;
-      if (data.playing) moviePlayer.play().catch(()=>{});
-      else moviePlayer.pause();
+      moviePlayer.src = data.url; moviePlayer.currentTime = data.time||0;
+      if(data.playing) moviePlayer.play().catch(()=>{}); else moviePlayer.pause();
     });
 
-    // Sync listener
-    database.ref("rooms/" + currentRoom + "/sync").on("value", snap => {
-      if (isHost) return;
+    database.ref("rooms/"+currentRoom+"/sync").on("value", snap=>{
+      if(isHost) return;
       const data = snap.val();
-      if (!data) return;
+      if(!data) return;
       const diff = Math.abs(moviePlayer.currentTime - data.time);
-      if (diff > SYNC_THRESHOLD) moviePlayer.currentTime = data.time;
-      if (data.playing) moviePlayer.play().catch(()=>{});
-      if (!data.playing && !moviePlayer.paused) moviePlayer.pause();
+      if(diff>SYNC_THRESHOLD) moviePlayer.currentTime = data.time;
+      if(data.playing) moviePlayer.play().catch(()=>{}); else if(!data.playing && !moviePlayer.paused) moviePlayer.pause();
     });
   };
 
-  // ===== Host load video =====
+  // ===== Host Load Video =====
   loadVideoBtn.onclick = function() {
     if (!currentRoom) { alert("Join a room"); return; }
     const url = videoUrlInput.value.trim();
     if (!url) { alert("Paste valid URL"); return; }
     isHost = true;
-    moviePlayer.src = url;
-    moviePlayer.currentTime = 0;
-    moviePlayer.play();
-    database.ref("rooms/" + currentRoom + "/video").set({ url, time: 0, playing: true });
+    moviePlayer.src = url; moviePlayer.currentTime=0; moviePlayer.play();
+    database.ref("rooms/"+currentRoom+"/video").set({ url, time:0, playing:true });
   };
 
   // ===== WebRTC =====
   async function createOffer() {
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
-    await database.ref("calls/" + currentRoom).set({ offer: { type: offer.type, sdp: offer.sdp } });
-
-    peerConnection.onicecandidate = e => { if (e.candidate) database.ref("calls/" + currentRoom + "/callerCandidates").push(e.candidate.toJSON()); };
-
-    database.ref("calls/" + currentRoom + "/answer").on("value", async snap => {
-      const data = snap.val();
-      if (!data) return;
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+    await database.ref("calls/"+currentRoom+"/offer").set({type:offer.type,sdp:offer.sdp});
+    database.ref("calls/"+currentRoom+"/answer").on("value", snap=>{
+      const answer = snap.val(); if(!answer) return;
+      peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
     });
-
-    database.ref("calls/" + currentRoom + "/calleeCandidates").on("child_added", snap => {
+    database.ref("calls/"+currentRoom+"/calleeCandidates").on("child_added", snap=>{
       peerConnection.addIceCandidate(new RTCIceCandidate(snap.val()));
     });
   }
 
-  async function answerOffer(offerData) {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offerData));
+  async function answerOffer(offer) {
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
-    await database.ref("calls/" + currentRoom + "/answer").set({ type: answer.type, sdp: answer.sdp });
-
-    peerConnection.onicecandidate = e => { if (e.candidate) database.ref("calls/" + currentRoom + "/calleeCandidates").push(e.candidate.toJSON()); };
-
-    database.ref("calls/" + currentRoom + "/callerCandidates").on("child_added", snap => {
+    await database.ref("calls/"+currentRoom+"/answer").set({type:answer.type,sdp:answer.sdp});
+    database.ref("calls/"+currentRoom+"/callerCandidates").on("child_added", snap=>{
       peerConnection.addIceCandidate(new RTCIceCandidate(snap.val()));
     });
   }
 
 };
 </script>
+
 </body>
 </html>

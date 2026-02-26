@@ -29,6 +29,12 @@
   <video id="localVideo" autoplay muted playsinline></video>
   <video id="remoteVideo" autoplay playsinline></video>
 </div>
+  <div id="audioControls">
+  <button id="muteBtn">Mute Mic</button>
+  <label>Remote Volume:
+    <input type="range" id="remoteVolume" min="0" max="1" step="0.05" value="1">
+  </label>
+</div>
 
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
@@ -69,6 +75,23 @@ window.onload = function() {
   .then(stream => {
     localStream = stream;
     localVideo.srcObject = stream;
+    // ===== Mic Mute/Unmute =====
+const muteBtn = document.getElementById("muteBtn");
+let micMuted = false;
+
+muteBtn.onclick = () => {
+  if (!localStream) return;
+  localStream.getAudioTracks().forEach(track => track.enabled = micMuted); // toggle
+  micMuted = !micMuted;
+  muteBtn.textContent = micMuted ? "Unmute Mic" : "Mute Mic";
+};
+
+// ===== Remote Volume Control =====
+const remoteVolume = document.getElementById("remoteVolume");
+remoteVolume.addEventListener("input", () => {
+  remoteVideo.volume = parseFloat(remoteVolume.value);
+});
+    
 
     peerConnection = new RTCPeerConnection(servers);
     stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));

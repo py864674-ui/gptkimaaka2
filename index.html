@@ -205,7 +205,10 @@
                 <input type="text" id="videoUrl" placeholder="Paste Direct Movie Link (.mp4)...">
                 <button class="btn-primary" onclick="changeVideo()">Push to Sync</button>
             </div>
-            <video id="mainVideo" controls crossorigin="anonymous" playsinline style="width:100%; background:black;"></video>
+           <video id="mainVideo" controls crossorigin="anonymous" playsinline preload="auto" style="width:100%; background:black;">
+  <source src="" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
         </div>
 
         <div class="sidebar">
